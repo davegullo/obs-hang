@@ -16,26 +16,33 @@ add_library(${CMAKE_PROJECT_NAME} MODULE)
 find_package(libobs REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
 
-# Find libmoq
-find_path(MOQ_INCLUDE_DIR moq.h
-    PATHS
-        "$ENV{HOME}/src/moq/target/include"
-        "/home/ubuntu/src/moq/rs/target/include"
-    NO_DEFAULT_PATH
-)
-find_library(MOQ_LIBRARY moq
-    PATHS
-        "$ENV{HOME}/src/moq/target/release"
-        "/home/ubuntu/src/moq/rs/target/release"
-    NO_DEFAULT_PATH
-)
+option(MOQ_LOCAL "Path to moq repo for local development" "")
 
-if(NOT MOQ_INCLUDE_DIR OR NOT MOQ_LIBRARY)
-    message(FATAL_ERROR "libmoq not found. Please build libmoq first.")
+if(MOQ_LOCAL)
+  add_subdirectory(${MOQ_LOCAL}/rs/libmoq moq)
+else()
+  if(NOT MOQ_VERSION)
+    message(FATAL_ERROR "MOQ_LOCAL must be set or MOQ_VERSION must be defined for FetchContent builds")
+  endif()
+
+  include(FetchContent)
+  FetchContent_Declare(
+    moq
+    URL
+      https://github.com/kixelated/moq/releases/download/v${MOQ_VERSION}/moq-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}.tar.gz
+  )
+  FetchContent_MakeAvailable(moq)
+
+  add_library(moq SHARED IMPORTED GLOBAL)
+  set_target_properties(
+    moq
+    PROPERTIES
+      IMPORTED_LOCATION "${moq_SOURCE_DIR}/lib/libmoq${CMAKE_SHARED_LIBRARY_SUFFIX}"
+      INTERFACE_INCLUDE_DIRECTORIES "${moq_SOURCE_DIR}/include"
+  )
 endif()
 
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${MOQ_INCLUDE_DIR})
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${MOQ_LIBRARY})
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE moq)
 
 # Find VA-API
 find_package(PkgConfig REQUIRED)

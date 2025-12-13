@@ -2,11 +2,38 @@
 
 ## Introduction
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+The plugin template is meant to be used as a starting point for OBS Studio plugin development. This specific implementation provides an OBS Studio source plugin that receives and decodes media streams using the MoQ (Media over QUIC) protocol.
+
+It includes:
 
 * Boilerplate plugin source code
 * A CMake project file
 * GitHub Actions workflows and repository actions
+
+## MoQ Hang Source
+
+This plugin implements a "Hang Source" that connects to MoQ servers to receive live video and audio streams. The source supports:
+
+* **MoQ Protocol Integration**: Connects to MoQ servers using the libmoq library for reliable, low-latency media transport over QUIC
+* **Hardware-Accelerated Video Decoding**: Uses VA-API (Video Acceleration API) for efficient hardware-accelerated video decoding
+* **Audio Decoding**: Leverages FFmpeg libraries for high-quality audio decoding and processing
+* **Thread-Safe Operation**: Implements proper threading with mutexes and condition variables for concurrent video/audio processing
+* **OBS Integration**: Fully integrated as an OBS source with async video rendering and audio output capabilities
+
+### Key Components
+
+* **hang-source.c/h**: Main source implementation handling MoQ connections, stream management, and OBS integration
+* **vaapi-decoder.c/h**: Hardware-accelerated video decoding using VA-API
+* **audio-decoder.c/h**: Audio decoding and processing using FFmpeg
+* **MoQ Callbacks**: Handles catalog reception, video/audio frame processing, and error management
+
+### Configuration
+
+The source accepts two main configuration parameters:
+* **URL**: MoQ server endpoint (e.g., `https://moq-server.example.com`)
+* **Broadcast**: Path to the broadcast stream on the MoQ server
+
+The plugin requires libmoq, VA-API, and FFmpeg dependencies to be available on the system.
 
 ## Supported Build Environments
 

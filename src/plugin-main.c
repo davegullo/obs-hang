@@ -18,13 +18,37 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <plugin-support.h>
+#include <moq.h>
+#include "hang-source.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
+const char *obs_module_name(void)
+{
+	return PLUGIN_NAME;
+}
+
+const char *obs_module_description(void)
+{
+	return "Hang MoQ Source for OBS Studio";
+}
+
 bool obs_module_load(void)
 {
-	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
+	obs_log(LOG_INFO, "Hang MoQ plugin loading (version %s)", PLUGIN_VERSION);
+
+	// Initialize MoQ logging
+	int log_result = moq_log_level("info");
+	if (log_result != 0) {
+		obs_log(LOG_WARNING, "Failed to initialize MoQ logging: %d", log_result);
+	}
+
+	// Register the hang source
+	obs_register_source(&hang_source_info);
+	obs_log(LOG_INFO, "Hang source registered successfully");
+
+	obs_log(LOG_INFO, "Hang MoQ plugin loaded successfully");
 	return true;
 }
 

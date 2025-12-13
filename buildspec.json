@@ -33,13 +33,13 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.plugintemplate-for-obs"
+            "bundleId": "com.example.obs-hang"
         }
     },
-    "name": "plugintemplate-for-obs",
-    "displayName": "Plugin Template for OBS",
-    "version": "1.0.0",
-    "author": "Your Name Here",
-    "website": "https://example.com",
-    "email": "me@example.com"
+    "name": "obs-hang",
+    "displayName": "OBS Hang MoQ Source",
+    "version": "0.0.1",
+    "author": "OBS Plugin Template",
+    "website": "https://github.com/obsproject/obs-studio",
+    "email": "noreply@obsproject.com"
 }

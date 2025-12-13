@@ -18,11 +18,15 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
 
 # Find libmoq
 find_path(MOQ_INCLUDE_DIR moq.h
-    PATHS "/home/ubuntu/src/moq/rs/target/include"
+    PATHS
+        "$ENV{HOME}/src/moq/target/include"
+        "/home/ubuntu/src/moq/rs/target/include"
     NO_DEFAULT_PATH
 )
 find_library(MOQ_LIBRARY moq
-    PATHS "/home/ubuntu/src/moq/rs/target/release"
+    PATHS
+        "$ENV{HOME}/src/moq/target/release"
+        "/home/ubuntu/src/moq/rs/target/release"
     NO_DEFAULT_PATH
 )
 
@@ -46,6 +50,7 @@ endif()
 pkg_check_modules(FFMPEG libavcodec libavutil libswscale libswresample)
 if(FFMPEG_FOUND)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE ${FFMPEG_LIBRARY_DIRS})
     target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${FFMPEG_LIBRARIES})
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_FFMPEG=1)
 else()

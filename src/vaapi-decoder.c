@@ -23,29 +23,40 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <libavutil/frame.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
-#include <va/va.h>
-#include <va/va_drm.h>
 #include <fcntl.h>
 #include <unistd.h>
 
-// VA-API headers for hardware acceleration
+// VA-API headers for hardware acceleration (Linux only)
+#ifdef __linux__
 #include <va/va.h>
 #include <va/va_drm.h>
+#endif
 
 #include "hang-source.h"
 
 // Function declarations
-static bool vaapi_decode_frame(struct vaapi_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context);
 static bool software_decode_frame(struct vaapi_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context);
 static void store_decoded_frame(struct hang_source *context, uint8_t *data, size_t size, uint32_t width, uint32_t height);
 static bool convert_mp4_nal_units_to_annex_b(const uint8_t *data, size_t size, uint8_t **out_data, size_t *out_size);
 
+#ifdef __linux__
+static bool vaapi_decode_frame(struct vaapi_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context);
+static bool vaapi_init_display(struct vaapi_decoder *decoder);
+static bool vaapi_create_config(struct vaapi_decoder *decoder);
+static bool vaapi_create_context(struct vaapi_decoder *decoder);
+static void vaapi_cleanup(struct vaapi_decoder *decoder);
+#endif
+
 struct vaapi_decoder {
+#ifdef __linux__
 	VADisplay va_display;
 	VAConfigID va_config;
 	VAContextID va_context;
 	VABufferID va_buffer;
 	VAProfile va_profile;
+#else
+	void *va_display; // Placeholder for non-Linux platforms
+#endif
 
 	// FFmpeg decoder for software fallback if needed
 	AVCodecContext *codec_ctx;
@@ -57,18 +68,13 @@ struct vaapi_decoder {
 	enum AVPixelFormat pix_fmt;
 };
 
-static bool vaapi_init_display(struct vaapi_decoder *decoder);
-static bool vaapi_create_config(struct vaapi_decoder *decoder);
-static bool vaapi_create_context(struct vaapi_decoder *decoder);
-static void vaapi_cleanup(struct vaapi_decoder *decoder);
-static bool vaapi_decode_frame(struct vaapi_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context);
-
 bool vaapi_decoder_init(struct hang_source *context)
 {
 	struct vaapi_decoder *decoder = bzalloc(sizeof(struct vaapi_decoder));
 	context->vaapi_context = decoder;
 
-	// Try to initialize VA-API hardware acceleration
+#ifdef __linux__
+	// Try to initialize VA-API hardware acceleration (Linux only)
 	if (!vaapi_init_display(decoder)) {
 		obs_log(LOG_WARNING, "VA-API display initialization failed, falling back to software decoding");
 		goto software_fallback;
@@ -90,6 +96,11 @@ bool vaapi_decoder_init(struct hang_source *context)
 	return true;
 
 software_fallback:
+#else
+	// On non-Linux platforms, always use software decoding
+	obs_log(LOG_INFO, "VA-API not available on this platform, using software decoding");
+#endif
+
 	// Initialize FFmpeg software decoder as fallback
 	const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
 	if (!codec) {
@@ -127,7 +138,9 @@ void vaapi_decoder_destroy(struct hang_source *context)
 		return;
 	}
 
+#ifdef __linux__
 	vaapi_cleanup(decoder);
+#endif
 
 	if (decoder->codec_ctx) {
 		avcodec_free_context(&decoder->codec_ctx);
@@ -149,19 +162,23 @@ bool vaapi_decoder_decode(struct hang_source *context, const uint8_t *data, size
 		return false;
 	}
 
+#ifdef __linux__
 	// Try VA-API first, fallback to FFmpeg if not available
 	if (decoder->va_display) {
 		obs_log(LOG_DEBUG, "Using VA-API decoder");
 		return vaapi_decode_frame(decoder, data, size, pts, context);
-	} else if (decoder->codec_ctx) {
+	} else
+#endif
+	if (decoder->codec_ctx) {
 		obs_log(LOG_DEBUG, "Using software decoder");
 		return software_decode_frame(decoder, data, size, pts, context);
 	} else {
-		obs_log(LOG_DEBUG, "No decoder available - va_display=%p, codec_ctx=%p", decoder->va_display, decoder->codec_ctx);
+		obs_log(LOG_DEBUG, "No decoder available - codec_ctx=%p", (void *)decoder->codec_ctx);
 		return false;
 	}
 }
 
+#ifdef __linux__
 static bool vaapi_init_display(struct vaapi_decoder *decoder)
 {
 	// Try to get DRM device
@@ -270,6 +287,7 @@ static bool vaapi_decode_frame(struct vaapi_decoder *decoder, const uint8_t *dat
 	obs_log(LOG_DEBUG, "VA-API decode not implemented");
 	return false;
 }
+#endif /* __linux__ */
 
 static bool convert_mp4_nal_units_to_annex_b(const uint8_t *data, size_t size, uint8_t **out_data, size_t *out_size)
 {

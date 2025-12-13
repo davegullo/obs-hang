@@ -16,10 +16,30 @@
     },
     {
       "name": "macos",
+      "displayName": "macOS arm64",
+      "description": "Build for macOS 12.0+ (arm64 only)",
+      "inherits": ["template"],
+      "binaryDir": "${sourceDir}/build_macos",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "generator": "Xcode",
+      "warnings": {"dev": true, "deprecated": true},
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CODESIGN_IDENTITY": "$penv{CODESIGN_IDENT}",
+        "CODESIGN_TEAM": "$penv{CODESIGN_TEAM}"
+      }
+    },
+    {
+      "name": "macos-universal",
       "displayName": "macOS Universal",
       "description": "Build for macOS 12.0+ (Universal binary)",
       "inherits": ["template"],
-      "binaryDir": "${sourceDir}/build_macos",
+      "binaryDir": "${sourceDir}/build_macos_universal",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",

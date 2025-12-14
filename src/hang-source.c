@@ -86,6 +86,7 @@ static void *hang_source_create(obs_data_t *settings, obs_source_t *source)
 	pthread_cond_init(&context->frame_cond, NULL);
 	pthread_mutex_init(&context->audio_mutex, NULL);
 	pthread_cond_init(&context->audio_cond, NULL);
+	pthread_mutex_init(&context->decoder_mutex, NULL);
 
 	// Initialize frame storage
 	context->current_frame_data = NULL;
@@ -121,8 +122,10 @@ static void hang_source_destroy(void *data)
 	}
 
 	// Clean up decoders (should already be destroyed by deactivate, but check to be safe)
+	pthread_mutex_lock(&context->decoder_mutex);
 	nvdec_decoder_destroy(context);
 	audio_decoder_destroy(context);
+	pthread_mutex_unlock(&context->decoder_mutex);
 
 	// Clean up video resources
 	if (context->texture) {
@@ -166,6 +169,7 @@ static void hang_source_destroy(void *data)
 	pthread_cond_destroy(&context->frame_cond);
 	pthread_mutex_destroy(&context->audio_mutex);
 	pthread_cond_destroy(&context->audio_cond);
+	pthread_mutex_destroy(&context->decoder_mutex);
 
 	// Clean up strings
 	bfree(context->url);
@@ -333,9 +337,13 @@ static void hang_source_deactivate(void *data)
 	context->audio_queue_len = 0;
 	pthread_mutex_unlock(&context->audio_mutex);
 
-	// Now safe to destroy decoders (callbacks should have exited by now)
+	// Now safe to destroy decoders - hold mutex to ensure no callbacks are in progress
+	// Any callback that passed the initial active check will be waiting on this mutex,
+	// and will see active=false when they acquire it
+	pthread_mutex_lock(&context->decoder_mutex);
 	nvdec_decoder_destroy(context);
 	audio_decoder_destroy(context);
+	pthread_mutex_unlock(&context->decoder_mutex);
 
 	obs_log(LOG_INFO, "Hang source deactivated");
 }
@@ -438,15 +446,26 @@ static void on_video(void *user_data, int32_t track, const uint8_t *data, uintpt
 	struct hang_source *context = user_data;
 	UNUSED_PARAMETER(track);
 
-	// Check active state and decoder availability before processing
-	if (!context || !context->active || !context->nvdec_context) {
+	// Quick check before acquiring lock (optimization)
+	if (!context || !context->active) {
 		return;
 	}
 
-	// Decode video frame using VA-API
+	// Lock decoder mutex to prevent race with decoder destruction
+	pthread_mutex_lock(&context->decoder_mutex);
+
+	// Re-check active state and decoder availability while holding lock
+	if (!context->active || !context->nvdec_context) {
+		pthread_mutex_unlock(&context->decoder_mutex);
+		return;
+	}
+
+	// Decode video frame using software decoder (or NVDEC on Linux)
 	if (nvdec_decoder_decode(context, data, size, pts, keyframe)) {
 		// Frame was decoded and queued
 	}
+
+	pthread_mutex_unlock(&context->decoder_mutex);
 }
 
 static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintptr_t size, uint64_t pts)
@@ -454,8 +473,17 @@ static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintpt
 	struct hang_source *context = user_data;
 	UNUSED_PARAMETER(track);
 
-	// Check active state and decoder availability before processing
-	if (!context || !context->active || !context->audio_decoder_context) {
+	// Quick check before acquiring lock (optimization)
+	if (!context || !context->active) {
+		return;
+	}
+
+	// Lock decoder mutex to prevent race with decoder destruction
+	pthread_mutex_lock(&context->decoder_mutex);
+
+	// Re-check active state and decoder availability while holding lock
+	if (!context->active || !context->audio_decoder_context) {
+		pthread_mutex_unlock(&context->decoder_mutex);
 		return;
 	}
 
@@ -463,6 +491,8 @@ static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintpt
 	if (audio_decoder_decode(context, data, size, pts)) {
 		// Audio was decoded and queued
 	}
+
+	pthread_mutex_unlock(&context->decoder_mutex);
 }
 
 static void on_error(void *user_data, int32_t code)

@@ -64,6 +64,7 @@ struct hang_source {
 	// Decoders
 	struct nvdec_decoder *nvdec_context;
 	struct audio_decoder *audio_decoder_context;
+	pthread_mutex_t decoder_mutex; // Protects decoder access during callbacks
 
 	// Decoded frame storage
 	uint8_t *current_frame_data;

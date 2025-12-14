@@ -22,7 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <pthread.h>
 
 // Forward declarations for decoder contexts
-struct vaapi_decoder;
+struct nvdec_decoder;
 struct audio_decoder;
 
 // Hang source context structure
@@ -62,7 +62,7 @@ struct hang_source {
 	size_t audio_queue_cap;
 
 	// Decoders
-	struct vaapi_decoder *vaapi_context;
+	struct nvdec_decoder *nvdec_context;
 	struct audio_decoder *audio_decoder_context;
 
 	// Decoded frame storage

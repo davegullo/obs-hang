@@ -44,14 +44,9 @@ endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE moq)
 
-# Find VA-API
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(VAAPI libva libva-drm)
-if(VAAPI_FOUND)
-    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${VAAPI_INCLUDE_DIRS})
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${VAAPI_LIBRARIES})
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_VAAPI=1)
-endif()
+# NVDEC support is enabled if FFmpeg has CUDA support
+# FFmpeg will handle CUDA dependencies
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_NVDEC=1)
 
 # Find FFmpeg
 pkg_check_modules(FFMPEG libavcodec libavutil libswscale libswresample)
@@ -86,8 +81,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     src/plugin-main.c
     src/hang-source.c
     src/hang-source.h
-    src/vaapi-decoder.c
-    src/vaapi-decoder.h
+    src/nvdec-decoder.c
+    src/nvdec-decoder.h
     src/audio-decoder.c
     src/audio-decoder.h
 )

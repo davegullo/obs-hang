@@ -28,7 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 // Include our headers
 #include "hang-source.h"
-#include "vaapi-decoder.h"
+#include "nvdec-decoder.h"
 #include "audio-decoder.h"
 
 static const char *hang_source_get_name(void *type_data);
@@ -119,7 +119,7 @@ static void hang_source_destroy(void *data)
 	}
 
 	// Clean up decoders
-	vaapi_decoder_destroy(context);
+	nvdec_decoder_destroy(context);
 	audio_decoder_destroy(context);
 
 	// Clean up video resources
@@ -224,7 +224,7 @@ static void hang_source_activate(void *data)
 	}
 
 	// Initialize decoders
-	if (!vaapi_decoder_init(context)) {
+	if (!nvdec_decoder_init(context)) {
 		obs_log(LOG_ERROR, "Failed to initialize VA-API decoder");
 		goto cleanup;
 	}
@@ -263,7 +263,7 @@ cleanup:
 		moq_session_close(context->session_id);
 		context->session_id = 0;
 	}
-	vaapi_decoder_destroy(context);
+	nvdec_decoder_destroy(context);
 	audio_decoder_destroy(context);
 }
 
@@ -290,7 +290,7 @@ static void hang_source_deactivate(void *data)
 	}
 
 	// Clean up decoders
-	vaapi_decoder_destroy(context);
+	nvdec_decoder_destroy(context);
 	audio_decoder_destroy(context);
 
 	// Clear current frame
@@ -428,7 +428,7 @@ static void on_video(void *user_data, int32_t track, const uint8_t *data, uintpt
 	}
 
 	// Decode video frame using VA-API
-	if (vaapi_decoder_decode(context, data, size, pts, keyframe)) {
+	if (nvdec_decoder_decode(context, data, size, pts, keyframe)) {
 		// Frame was decoded and queued
 	}
 }

@@ -27,7 +27,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // FFmpeg headers for hardware acceleration
 #include <libavcodec/avcodec.h>
 #include <libavutil/hwcontext.h>
+#ifdef HAVE_NVDEC
 #include <libavutil/hwcontext_cuda.h>
+#endif
 
 #include "hang-source.h"
 
@@ -37,13 +39,6 @@ static bool nvdec_decode_frame(struct nvdec_decoder *decoder, const uint8_t *dat
 static bool software_decode_frame(struct nvdec_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context);
 static void store_decoded_frame(struct hang_source *context, uint8_t *data, size_t size, uint32_t width, uint32_t height);
 static bool convert_mp4_nal_units_to_annex_b(const uint8_t *data, size_t size, uint8_t **out_data, size_t *out_size);
-
-#ifdef HAVE_NVDEC
-static bool nvdec_decode_frame(struct nvdec_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context);
-static bool nvdec_init_decoder(struct nvdec_decoder *decoder);
-static bool nvdec_create_parser(struct nvdec_decoder *decoder);
-static void nvdec_cleanup(struct nvdec_decoder *decoder);
-#endif
 
 struct nvdec_decoder {
 	// FFmpeg hardware acceleration context
@@ -118,22 +113,17 @@ void nvdec_decoder_destroy(struct hang_source *context)
 
 	if (decoder->codec_ctx) {
 		avcodec_free_context(&decoder->codec_ctx);
+		decoder->codec_ctx = NULL;
 	}
 
 	if (decoder->hw_device_ctx) {
 		av_buffer_unref(&decoder->hw_device_ctx);
+		decoder->hw_device_ctx = NULL;
 	}
 
 	if (decoder->sws_ctx) {
 		sws_freeContext(decoder->sws_ctx);
-	}
-
-	if (decoder->codec_ctx) {
-		avcodec_free_context(&decoder->codec_ctx);
-	}
-
-	if (decoder->sws_ctx) {
-		sws_freeContext(decoder->sws_ctx);
+		decoder->sws_ctx = NULL;
 	}
 
 	bfree(decoder);
@@ -159,6 +149,7 @@ bool nvdec_decoder_decode(struct hang_source *context, const uint8_t *data, size
 }
 
 // Initialize CUDA hardware acceleration with FFmpeg
+#ifdef HAVE_NVDEC
 static bool nvdec_init_cuda_decoder(struct nvdec_decoder *decoder)
 {
 	int ret;
@@ -212,8 +203,17 @@ static bool nvdec_init_cuda_decoder(struct nvdec_decoder *decoder)
 	obs_log(LOG_INFO, "CUDA hardware decoder initialized with codec: %s", codec->name);
 	return true;
 }
+#else
+// CUDA not available, always return false
+static bool nvdec_init_cuda_decoder(struct nvdec_decoder *decoder)
+{
+	UNUSED_PARAMETER(decoder);
+	return false;
+}
+#endif
 
 // Decode frame using CUDA hardware acceleration
+#ifdef HAVE_NVDEC
 static bool nvdec_decode_frame(struct nvdec_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context)
 {
 	// Convert MP4 NAL units to Annex B format
@@ -332,6 +332,18 @@ static bool nvdec_decode_frame(struct nvdec_decoder *decoder, const uint8_t *dat
 	bfree(converted_data);
 	return true;
 }
+#else
+// CUDA not available, fallback to software decoding
+static bool nvdec_decode_frame(struct nvdec_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context)
+{
+	UNUSED_PARAMETER(decoder);
+	UNUSED_PARAMETER(data);
+	UNUSED_PARAMETER(size);
+	UNUSED_PARAMETER(pts);
+	UNUSED_PARAMETER(context);
+	return false;
+}
+#endif
 
 static bool convert_mp4_nal_units_to_annex_b(const uint8_t *data, size_t size, uint8_t **out_data, size_t *out_size)
 {
@@ -409,10 +421,10 @@ static bool software_decode_frame(struct nvdec_decoder *decoder, const uint8_t *
 
 	int ret = avcodec_send_packet(decoder->codec_ctx, packet);
 	av_packet_free(&packet);
+	packet = NULL; // Set to NULL after freeing to prevent double free
 
 	if (ret < 0) {
 		obs_log(LOG_ERROR, "Error sending packet to decoder: %s", av_err2str(ret));
-		av_packet_free(&packet);
 		bfree(converted_data);
 		return false;
 	}
@@ -420,6 +432,7 @@ static bool software_decode_frame(struct nvdec_decoder *decoder, const uint8_t *
 	AVFrame *frame = av_frame_alloc();
 	if (!frame) {
 		obs_log(LOG_ERROR, "Failed to allocate AVFrame");
+		bfree(converted_data);
 		return false;
 	}
 
@@ -429,7 +442,6 @@ static bool software_decode_frame(struct nvdec_decoder *decoder, const uint8_t *
 			obs_log(LOG_ERROR, "Error receiving frame from decoder: %s", av_err2str(ret));
 		}
 		av_frame_free(&frame);
-		av_packet_free(&packet);
 		bfree(converted_data);
 		return false;
 	}
@@ -482,7 +494,19 @@ static bool software_decode_frame(struct nvdec_decoder *decoder, const uint8_t *
 
 static void store_decoded_frame(struct hang_source *context, uint8_t *data, size_t size, uint32_t width, uint32_t height)
 {
+	if (!context || !data) {
+		return;
+	}
+
 	pthread_mutex_lock(&context->frame_mutex);
+
+	// Check if source is still active before storing frame
+	// This prevents storing frames after deactivation has started cleanup
+	if (!context->active) {
+		pthread_mutex_unlock(&context->frame_mutex);
+		bfree(data); // Free the data we allocated since we're not using it
+		return;
+	}
 
 	// Free previous frame data
 	if (context->current_frame_data) {

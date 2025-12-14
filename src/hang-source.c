@@ -107,35 +107,46 @@ static void hang_source_destroy(void *data)
 {
 	struct hang_source *context = data;
 
-	// Stop the source first
+	// Stop the source first (this will close subscriptions, sessions, and destroy decoders)
 	hang_source_deactivate(context);
 
-	// Clean up MoQ resources
+	// Clean up MoQ resources (should already be closed by deactivate, but check to be safe)
 	if (context->subscription_id > 0) {
 		moq_subscribe_close(context->subscription_id);
+		context->subscription_id = 0;
 	}
 	if (context->session_id > 0) {
 		moq_session_close(context->session_id);
+		context->session_id = 0;
 	}
 
-	// Clean up decoders
+	// Clean up decoders (should already be destroyed by deactivate, but check to be safe)
 	nvdec_decoder_destroy(context);
 	audio_decoder_destroy(context);
 
 	// Clean up video resources
 	if (context->texture) {
 		gs_texture_destroy(context->texture);
+		context->texture = NULL;
 	}
 
-	// Clean up frame data
+	// Clean up frame data (should already be cleaned by deactivate, but check to be safe)
+	pthread_mutex_lock(&context->frame_mutex);
 	if (context->current_frame_data) {
 		bfree(context->current_frame_data);
+		context->current_frame_data = NULL;
 	}
+	pthread_mutex_unlock(&context->frame_mutex);
 
-	// Clean up queues
+	// Clean up queues (should already be cleaned by deactivate, but check to be safe)
+	pthread_mutex_lock(&context->frame_mutex);
 	for (size_t i = 0; i < context->frame_queue_len; i++) {
 		obs_source_frame_free(context->frame_queue[i]);
 	}
+	context->frame_queue_len = 0;
+	pthread_mutex_unlock(&context->frame_mutex);
+
+	pthread_mutex_lock(&context->audio_mutex);
 	for (size_t i = 0; i < context->audio_queue_len; i++) {
 		// Free the audio data channels
 		struct obs_source_audio *audio = context->audio_queue[i];
@@ -144,6 +155,8 @@ static void hang_source_destroy(void *data)
 		}
 		bfree(audio);
 	}
+	context->audio_queue_len = 0;
+	pthread_mutex_unlock(&context->audio_mutex);
 
 	bfree(context->frame_queue);
 	bfree(context->audio_queue);
@@ -277,9 +290,10 @@ static void hang_source_deactivate(void *data)
 
 	obs_log(LOG_INFO, "Deactivating hang source");
 
+	// Set active to false FIRST to prevent callbacks from processing new data
 	context->active = false;
 
-	// Close subscription and session
+	// Close subscription and session to stop new callbacks
 	if (context->subscription_id > 0) {
 		moq_subscribe_close(context->subscription_id);
 		context->subscription_id = 0;
@@ -289,11 +303,8 @@ static void hang_source_deactivate(void *data)
 		context->session_id = 0;
 	}
 
-	// Clean up decoders
-	nvdec_decoder_destroy(context);
-	audio_decoder_destroy(context);
-
-	// Clear current frame
+	// Clear current frame and queues BEFORE destroying decoders
+	// This prevents callbacks from accessing freed decoder resources
 	pthread_mutex_lock(&context->frame_mutex);
 	if (context->current_frame_data) {
 		bfree(context->current_frame_data);
@@ -321,6 +332,10 @@ static void hang_source_deactivate(void *data)
 	}
 	context->audio_queue_len = 0;
 	pthread_mutex_unlock(&context->audio_mutex);
+
+	// Now safe to destroy decoders (callbacks should have exited by now)
+	nvdec_decoder_destroy(context);
+	audio_decoder_destroy(context);
 
 	obs_log(LOG_INFO, "Hang source deactivated");
 }
@@ -423,7 +438,8 @@ static void on_video(void *user_data, int32_t track, const uint8_t *data, uintpt
 	struct hang_source *context = user_data;
 	UNUSED_PARAMETER(track);
 
-	if (!context->active) {
+	// Check active state and decoder availability before processing
+	if (!context || !context->active || !context->nvdec_context) {
 		return;
 	}
 
@@ -438,7 +454,8 @@ static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintpt
 	struct hang_source *context = user_data;
 	UNUSED_PARAMETER(track);
 
-	if (!context->active) {
+	// Check active state and decoder availability before processing
+	if (!context || !context->active || !context->audio_decoder_context) {
 		return;
 	}
 

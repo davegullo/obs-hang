@@ -45,10 +45,22 @@ endif()
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE moq)
 
 # NVDEC support is enabled if FFmpeg has CUDA support
-# FFmpeg will handle CUDA dependencies
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_NVDEC=1)
+# CUDA is only available on Linux/Windows, not macOS
+if(NOT APPLE)
+  # Check if CUDA is available
+  find_library(CUDA_LIBRARY cuda PATHS /usr/local/cuda/lib64 /usr/local/cuda/lib)
+  if(CUDA_LIBRARY OR EXISTS "/usr/local/cuda/include/cuda.h")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE HAVE_NVDEC=1)
+    message(STATUS "NVDEC/CUDA support enabled")
+  else()
+    message(STATUS "NVDEC/CUDA support disabled (CUDA not found)")
+  endif()
+else()
+  message(STATUS "NVDEC/CUDA support disabled (not available on macOS)")
+endif()
 
 # Find FFmpeg
+include(FindPkgConfig)
 pkg_check_modules(FFMPEG libavcodec libavutil libswscale libswresample)
 if(FFMPEG_FOUND)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})

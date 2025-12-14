@@ -377,18 +377,15 @@ static void hang_source_video_render(void *data, gs_effect_t *effect)
 					break;
 				}
 			}
-			obs_log(LOG_DEBUG, "RGBA data validation: has_data=%d, size=%zu", has_data, context->current_frame_size);
 
 			// Upload frame data to texture
 			gs_texture_set_image(context->texture, context->current_frame_data, width * 4, false);
-			obs_log(LOG_DEBUG, "Texture upload completed for %dx%d", width, height);
 
 			// Render the texture
 			gs_eparam_t *param = gs_effect_get_param_by_name(effect, "image");
 			if (param) {
 				gs_effect_set_texture(param, context->texture);
 				gs_draw_sprite(context->texture, 0, width, height);
-				obs_log(LOG_DEBUG, "Sprite drawn successfully");
 			} else {
 				obs_log(LOG_ERROR, "Effect parameter 'image' not found");
 			}
@@ -424,13 +421,11 @@ static void on_catalog(void *user_data, const char *catalog_json)
 static void on_video(void *user_data, int32_t track, const uint8_t *data, uintptr_t size, uint64_t pts, bool keyframe)
 {
 	struct hang_source *context = user_data;
+	UNUSED_PARAMETER(track);
 
 	if (!context->active) {
 		return;
 	}
-
-	obs_log(LOG_DEBUG, "Received video frame: track=%d, size=%zu, pts=%llu, keyframe=%d",
-		track, size, pts, keyframe);
 
 	// Decode video frame using VA-API
 	if (vaapi_decoder_decode(context, data, size, pts, keyframe)) {
@@ -441,12 +436,11 @@ static void on_video(void *user_data, int32_t track, const uint8_t *data, uintpt
 static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintptr_t size, uint64_t pts)
 {
 	struct hang_source *context = user_data;
+	UNUSED_PARAMETER(track);
 
 	if (!context->active) {
 		return;
 	}
-
-	obs_log(LOG_DEBUG, "Received audio frame: track=%d, size=%zu, pts=%llu", track, size, pts);
 
 	// Decode audio frame using FFmpeg
 	if (audio_decoder_decode(context, data, size, pts)) {

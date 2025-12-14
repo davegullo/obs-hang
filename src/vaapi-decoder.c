@@ -165,15 +165,12 @@ bool vaapi_decoder_decode(struct hang_source *context, const uint8_t *data, size
 #ifdef __linux__
 	// Try VA-API first, fallback to FFmpeg if not available
 	if (decoder->va_display) {
-		obs_log(LOG_DEBUG, "Using VA-API decoder");
 		return vaapi_decode_frame(decoder, data, size, pts, context);
 	} else
 #endif
 	if (decoder->codec_ctx) {
-		obs_log(LOG_DEBUG, "Using software decoder");
 		return software_decode_frame(decoder, data, size, pts, context);
 	} else {
-		obs_log(LOG_DEBUG, "No decoder available - codec_ctx=%p", (void *)decoder->codec_ctx);
 		return false;
 	}
 }
@@ -284,7 +281,6 @@ static bool vaapi_decode_frame(struct vaapi_decoder *decoder, const uint8_t *dat
 	// 3. Wait for decode completion
 	// 4. Map the surface to CPU memory or use VA-API for rendering
 
-	obs_log(LOG_DEBUG, "VA-API decode not implemented");
 	return false;
 }
 #endif /* __linux__ */
@@ -342,7 +338,6 @@ static bool convert_mp4_nal_units_to_annex_b(const uint8_t *data, size_t size, u
 
 static bool software_decode_frame(struct vaapi_decoder *decoder, const uint8_t *data, size_t size, uint64_t pts, struct hang_source *context)
 {
-	obs_log(LOG_DEBUG, "Software decoding frame: size=%zu, pts=%llu", size, pts);
 
 	// For MP4 H.264 (avc1), convert length-prefixed NAL units to start-code format
 	uint8_t *converted_data = NULL;
@@ -431,8 +426,6 @@ static bool software_decode_frame(struct vaapi_decoder *decoder, const uint8_t *
 
 	// Store the decoded frame
 	store_decoded_frame(context, rgba_data, rgba_size, frame->width, frame->height);
-
-	obs_log(LOG_DEBUG, "Stored decoded RGBA frame for OBS: %dx%d", frame->width, frame->height);
 
 	av_frame_free(&frame);
 	bfree(converted_data);

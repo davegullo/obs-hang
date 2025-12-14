@@ -1,5 +1,5 @@
 /*
-VA-API Hardware Video Decoder for OBS Hang Source
+NVDEC Hardware Video Decoder for OBS Hang Source
 Copyright (C) 2024 OBS Plugin Template
 
 This program is free software; you can redistribute it and/or modify
@@ -24,7 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 struct hang_source;
 
-// VA-API decoder functions
-bool vaapi_decoder_init(struct hang_source *context);
-void vaapi_decoder_destroy(struct hang_source *context);
-bool vaapi_decoder_decode(struct hang_source *context, const uint8_t *data, size_t size, uint64_t pts, bool keyframe);
+// NVDEC decoder functions
+bool nvdec_decoder_init(struct hang_source *context);
+void nvdec_decoder_destroy(struct hang_source *context);
+bool nvdec_decoder_decode(struct hang_source *context, const uint8_t *data, size_t size, uint64_t pts, bool keyframe);

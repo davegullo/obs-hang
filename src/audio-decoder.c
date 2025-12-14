@@ -56,6 +56,5 @@ bool audio_decoder_decode(struct hang_source *context, const uint8_t *data, size
 	UNUSED_PARAMETER(pts);
 
 	// TODO: Implement FFmpeg audio decoding
-	obs_log(LOG_DEBUG, "Audio decoder not implemented");
 	return false;
 }

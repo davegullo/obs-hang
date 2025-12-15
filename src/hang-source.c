@@ -45,11 +45,11 @@ static void hang_source_get_defaults(obs_data_t *settings);
 
 // FFmpeg audio decoder functions (declared in audio-decoder.h)
 
-// MoQ callback functions
-static void on_catalog(void *user_data, const char *catalog_json);
-static void on_video(void *user_data, int32_t track, const uint8_t *data, uintptr_t size, uint64_t pts, bool keyframe);
-static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintptr_t size, uint64_t pts);
-static void on_error(void *user_data, int32_t code);
+// MoQ callback functions (new API)
+static void on_session_status(void *user_data, int32_t code);
+static void on_catalog(void *user_data, int32_t catalog_id);
+static void on_video_frame(void *user_data, int32_t frame_id);
+static void on_audio_frame(void *user_data, int32_t frame_id);
 
 
 struct obs_source_info hang_source_info = {
@@ -108,17 +108,33 @@ static void hang_source_destroy(void *data)
 {
 	struct hang_source *context = data;
 
-	// Stop the source first (this will close subscriptions, sessions, and destroy decoders)
+	// Stop the source first (this will close all MoQ resources and destroy decoders)
 	hang_source_deactivate(context);
 
 	// Clean up MoQ resources (should already be closed by deactivate, but check to be safe)
-	if (context->subscription_id > 0) {
-		moq_subscribe_close(context->subscription_id);
-		context->subscription_id = 0;
+	if (context->audio_track_id > 0) {
+		moq_consume_audio_track_close(context->audio_track_id);
+		context->audio_track_id = 0;
+	}
+	if (context->video_track_id > 0) {
+		moq_consume_video_track_close(context->video_track_id);
+		context->video_track_id = 0;
+	}
+	if (context->catalog_consumer_id > 0) {
+		moq_consume_catalog_close(context->catalog_consumer_id);
+		context->catalog_consumer_id = 0;
+	}
+	if (context->broadcast_id > 0) {
+		moq_consume_close(context->broadcast_id);
+		context->broadcast_id = 0;
 	}
 	if (context->session_id > 0) {
 		moq_session_close(context->session_id);
 		context->session_id = 0;
+	}
+	if (context->origin_id > 0) {
+		moq_origin_close(context->origin_id);
+		context->origin_id = 0;
 	}
 
 	// Clean up decoders (should already be destroyed by deactivate, but check to be safe)
@@ -233,52 +249,53 @@ static void hang_source_activate(void *data)
 
 	obs_log(LOG_INFO, "Activating hang source with URL: %s, broadcast: %s", context->url, context->broadcast_path);
 
-	// Create MoQ session
-	context->session_id = moq_session_connect(context->url, NULL, NULL);
-	if (context->session_id <= 0) {
-		obs_log(LOG_ERROR, "Failed to create MoQ session");
-		return;
-	}
-
-	// Initialize decoders
+	// Initialize decoders first (local operation, doesn't need network)
 	if (!nvdec_decoder_init(context)) {
-		obs_log(LOG_ERROR, "Failed to initialize VA-API decoder");
-		goto cleanup;
+		obs_log(LOG_ERROR, "Failed to initialize video decoder");
+		return;
 	}
 
 	if (!audio_decoder_init(context)) {
 		obs_log(LOG_ERROR, "Failed to initialize audio decoder");
+		nvdec_decoder_destroy(context);
+		return;
+	}
+
+	// 1. Create origin for consumption
+	context->origin_id = moq_origin_create();
+	if (context->origin_id <= 0) {
+		obs_log(LOG_ERROR, "Failed to create MoQ origin");
 		goto cleanup;
 	}
 
-	// Create subscription
-	context->subscription_id = moq_subscribe_create(
-		context->session_id,
-		context->broadcast_path,
-		on_catalog,
-		on_video,
-		on_audio,
-		on_error,
+	// 2. Connect session with origin for consumption
+	// The on_session_status callback will be called when connected,
+	// and will then subscribe to the broadcast and catalog
+	context->session_id = moq_session_connect(
+		context->url,
+		0,                    // no publish origin
+		context->origin_id,   // consume origin
+		on_session_status,
 		context
 	);
-
-	if (context->subscription_id <= 0) {
-		obs_log(LOG_ERROR, "Failed to create MoQ subscription");
+	if (context->session_id <= 0) {
+		obs_log(LOG_ERROR, "Failed to create MoQ session");
 		goto cleanup;
 	}
 
+	// Mark as active - broadcast/catalog subscription happens in on_session_status
 	context->active = true;
-	obs_log(LOG_INFO, "Hang source activated successfully");
+	obs_log(LOG_INFO, "Hang source activated, waiting for session connection...");
 	return;
 
 cleanup:
-	if (context->subscription_id > 0) {
-		moq_subscribe_close(context->subscription_id);
-		context->subscription_id = 0;
-	}
 	if (context->session_id > 0) {
 		moq_session_close(context->session_id);
 		context->session_id = 0;
+	}
+	if (context->origin_id > 0) {
+		moq_origin_close(context->origin_id);
+		context->origin_id = 0;
 	}
 	nvdec_decoder_destroy(context);
 	audio_decoder_destroy(context);
@@ -297,14 +314,39 @@ static void hang_source_deactivate(void *data)
 	// Set active to false FIRST to prevent callbacks from processing new data
 	context->active = false;
 
-	// Close subscription and session to stop new callbacks
-	if (context->subscription_id > 0) {
-		moq_subscribe_close(context->subscription_id);
-		context->subscription_id = 0;
+	// Close MoQ resources in reverse order to stop new callbacks
+	// 1. Close track subscriptions first
+	if (context->audio_track_id > 0) {
+		moq_consume_audio_track_close(context->audio_track_id);
+		context->audio_track_id = 0;
 	}
+	if (context->video_track_id > 0) {
+		moq_consume_video_track_close(context->video_track_id);
+		context->video_track_id = 0;
+	}
+
+	// 2. Close catalog consumer
+	if (context->catalog_consumer_id > 0) {
+		moq_consume_catalog_close(context->catalog_consumer_id);
+		context->catalog_consumer_id = 0;
+	}
+
+	// 3. Close broadcast consumer
+	if (context->broadcast_id > 0) {
+		moq_consume_close(context->broadcast_id);
+		context->broadcast_id = 0;
+	}
+
+	// 4. Close session
 	if (context->session_id > 0) {
 		moq_session_close(context->session_id);
 		context->session_id = 0;
+	}
+
+	// 5. Close origin
+	if (context->origin_id > 0) {
+		moq_origin_close(context->origin_id);
+		context->origin_id = 0;
 	}
 
 	// Clear current frame and queues BEFORE destroying decoders
@@ -431,23 +473,128 @@ static uint32_t hang_source_get_height(void *data)
 	return context->current_frame_height > 0 ? context->current_frame_height : 1080;
 }
 
-// MoQ callback implementations
-static void on_catalog(void *user_data, const char *catalog_json)
-{
-	UNUSED_PARAMETER(user_data);
-	obs_log(LOG_INFO, "Received catalog: %s", catalog_json);
-
-	// TODO: Parse catalog JSON to configure decoders
-	// For now, assume default settings
-}
-
-static void on_video(void *user_data, int32_t track, const uint8_t *data, uintptr_t size, uint64_t pts, bool keyframe)
+// MoQ callback implementations (new API)
+static void on_session_status(void *user_data, int32_t code)
 {
 	struct hang_source *context = user_data;
-	UNUSED_PARAMETER(track);
+
+	if (!context) {
+		return;
+	}
+
+	if (code == 0) {
+		obs_log(LOG_INFO, "MoQ session connected, subscribing to broadcast...");
+
+		// Now that session is connected, subscribe to the broadcast
+		context->broadcast_id = moq_origin_consume(context->origin_id, context->broadcast_path);
+		if (context->broadcast_id <= 0) {
+			obs_log(LOG_ERROR, "Failed to consume broadcast: %s (error %d)", 
+				context->broadcast_path, context->broadcast_id);
+			context->active = false;
+			return;
+		}
+		obs_log(LOG_INFO, "Subscribed to broadcast: %s (id %d)", 
+			context->broadcast_path, context->broadcast_id);
+
+		// Subscribe to catalog updates
+		context->catalog_consumer_id = moq_consume_catalog(
+			context->broadcast_id,
+			on_catalog,
+			context
+		);
+		if (context->catalog_consumer_id <= 0) {
+			obs_log(LOG_ERROR, "Failed to subscribe to catalog: %d", context->catalog_consumer_id);
+			moq_consume_close(context->broadcast_id);
+			context->broadcast_id = 0;
+			context->active = false;
+			return;
+		}
+		obs_log(LOG_INFO, "Subscribed to catalog (id %d)", context->catalog_consumer_id);
+
+	} else if (code < 0) {
+		obs_log(LOG_ERROR, "MoQ session error: %d", code);
+		// Session failed - mark as inactive
+		context->active = false;
+	}
+}
+
+static void on_catalog(void *user_data, int32_t catalog_id)
+{
+	struct hang_source *context = user_data;
+
+	if (!context || !context->active) {
+		return;
+	}
+
+	if (catalog_id <= 0) {
+		obs_log(LOG_ERROR, "Catalog error: %d", catalog_id);
+		return;
+	}
+
+	obs_log(LOG_INFO, "Received catalog update: %d", catalog_id);
+
+	// Close existing track subscriptions if any
+	if (context->video_track_id > 0) {
+		moq_consume_video_track_close(context->video_track_id);
+		context->video_track_id = 0;
+	}
+	if (context->audio_track_id > 0) {
+		moq_consume_audio_track_close(context->audio_track_id);
+		context->audio_track_id = 0;
+	}
+
+	// Subscribe to first video track (index 0) with 100ms latency
+	context->video_track_id = moq_consume_video_track(
+		context->broadcast_id,
+		0,     // first track
+		100,   // 100ms latency
+		on_video_frame,
+		context
+	);
+	if (context->video_track_id <= 0) {
+		obs_log(LOG_WARNING, "Failed to subscribe to video track: %d", context->video_track_id);
+	} else {
+		obs_log(LOG_INFO, "Subscribed to video track: %d", context->video_track_id);
+	}
+
+	// Subscribe to first audio track (index 0) with 100ms latency
+	context->audio_track_id = moq_consume_audio_track(
+		context->broadcast_id,
+		0,     // first track
+		100,   // 100ms latency
+		on_audio_frame,
+		context
+	);
+	if (context->audio_track_id <= 0) {
+		obs_log(LOG_WARNING, "Failed to subscribe to audio track: %d", context->audio_track_id);
+	} else {
+		obs_log(LOG_INFO, "Subscribed to audio track: %d", context->audio_track_id);
+	}
+}
+
+static void on_video_frame(void *user_data, int32_t frame_id)
+{
+	struct hang_source *context = user_data;
 
 	// Quick check before acquiring lock (optimization)
 	if (!context || !context->active) {
+		if (frame_id > 0) {
+			moq_consume_frame_close(frame_id);
+		}
+		return;
+	}
+
+	if (frame_id <= 0) {
+		obs_log(LOG_ERROR, "Video frame error: %d", frame_id);
+		return;
+	}
+
+	// Get frame data from libmoq
+	struct Frame frame = {0};
+	int32_t result = moq_consume_frame_chunk(frame_id, 0, &frame);
+	if (result < 0) {
+		obs_log(LOG_ERROR, "Failed to get video frame chunk: %d", result);
+		moq_consume_frame_close(frame_id);
 		return;
 	}
 
@@ -457,24 +604,44 @@ static void on_video(void *user_data, int32_t track, const uint8_t *data, uintpt
 	// Re-check active state and decoder availability while holding lock
 	if (!context->active || !context->nvdec_context) {
 		pthread_mutex_unlock(&context->decoder_mutex);
+		moq_consume_frame_close(frame_id);
 		return;
 	}
 
 	// Decode video frame using software decoder (or NVDEC on Linux)
-	if (nvdec_decoder_decode(context, data, size, pts, keyframe)) {
+	if (nvdec_decoder_decode(context, frame.payload, frame.payload_size, frame.pts, frame.keyframe)) {
 		// Frame was decoded and queued
 	}
 
 	pthread_mutex_unlock(&context->decoder_mutex);
+
+	// Release the frame
+	moq_consume_frame_close(frame_id);
 }
 
-static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintptr_t size, uint64_t pts)
+static void on_audio_frame(void *user_data, int32_t frame_id)
 {
 	struct hang_source *context = user_data;
-	UNUSED_PARAMETER(track);
 
 	// Quick check before acquiring lock (optimization)
 	if (!context || !context->active) {
+		if (frame_id > 0) {
+			moq_consume_frame_close(frame_id);
+		}
+		return;
+	}
+
+	if (frame_id <= 0) {
+		obs_log(LOG_ERROR, "Audio frame error: %d", frame_id);
+		return;
+	}
+
+	// Get frame data from libmoq
+	struct Frame frame = {0};
+	int32_t result = moq_consume_frame_chunk(frame_id, 0, &frame);
+	if (result < 0) {
+		obs_log(LOG_ERROR, "Failed to get audio frame chunk: %d", result);
+		moq_consume_frame_close(frame_id);
 		return;
 	}
 
@@ -484,22 +651,18 @@ static void on_audio(void *user_data, int32_t track, const uint8_t *data, uintpt
 	// Re-check active state and decoder availability while holding lock
 	if (!context->active || !context->audio_decoder_context) {
 		pthread_mutex_unlock(&context->decoder_mutex);
+		moq_consume_frame_close(frame_id);
 		return;
 	}
 
 	// Decode audio frame using FFmpeg
-	if (audio_decoder_decode(context, data, size, pts)) {
+	if (audio_decoder_decode(context, frame.payload, frame.payload_size, frame.pts)) {
 		// Audio was decoded and queued
 	}
 
 	pthread_mutex_unlock(&context->decoder_mutex);
-}
 
-static void on_error(void *user_data, int32_t code)
-{
-	UNUSED_PARAMETER(user_data);
-	obs_log(LOG_ERROR, "MoQ error: %d", code);
-
-	// TODO: Handle reconnection logic
+	// Release the frame
+	moq_consume_frame_close(frame_id);
 }
 

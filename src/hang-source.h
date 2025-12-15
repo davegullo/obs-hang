@@ -33,9 +33,13 @@ struct hang_source {
 	char *url;
 	char *broadcast_path;
 
-	// MoQ session and subscription
+	// MoQ resources (new API)
+	int32_t origin_id;
 	int32_t session_id;
-	int32_t subscription_id;
+	int32_t broadcast_id;
+	int32_t catalog_consumer_id;
+	int32_t video_track_id;
+	int32_t audio_track_id;
 
 	// Video state
 	gs_texture_t *texture;

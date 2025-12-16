@@ -39,7 +39,7 @@ bool obs_module_load(void)
 	obs_log(LOG_INFO, "Hang MoQ plugin loading (version %s)", PLUGIN_VERSION);
 
 	// Initialize MoQ logging
-	int log_result = moq_log_level("info");
+	int log_result = moq_log_level("info", 4);
 	if (log_result != 0) {
 		obs_log(LOG_WARNING, "Failed to initialize MoQ logging: %d", log_result);
 	}

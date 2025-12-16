@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <media-io/video-io.h>
 #include <media-io/audio-io.h>
+#include <string.h>
 
 // Include the moq library header
 #include <moq.h>
@@ -273,6 +274,7 @@ static void hang_source_activate(void *data)
 	// and will then subscribe to the broadcast and catalog
 	context->session_id = moq_session_connect(
 		context->url,
+		strlen(context->url),
 		0,                    // no publish origin
 		context->origin_id,   // consume origin
 		on_session_status,
@@ -486,7 +488,7 @@ static void on_session_status(void *user_data, int32_t code)
 		obs_log(LOG_INFO, "MoQ session connected, subscribing to broadcast...");
 
 		// Now that session is connected, subscribe to the broadcast
-		context->broadcast_id = moq_origin_consume(context->origin_id, context->broadcast_path);
+		context->broadcast_id = moq_origin_consume(context->origin_id, context->broadcast_path, strlen(context->broadcast_path));
 		if (context->broadcast_id <= 0) {
 			obs_log(LOG_ERROR, "Failed to consume broadcast: %s (error %d)", 
 				context->broadcast_path, context->broadcast_id);
@@ -609,7 +611,7 @@ static void on_video_frame(void *user_data, int32_t frame_id)
 	}
 
 	// Decode video frame using software decoder (or NVDEC on Linux)
-	if (nvdec_decoder_decode(context, frame.payload, frame.payload_size, frame.pts, frame.keyframe)) {
+	if (nvdec_decoder_decode(context, frame.payload, frame.payload_size, frame.timestamp_us, frame.keyframe)) {
 		// Frame was decoded and queued
 	}
 
@@ -656,7 +658,7 @@ static void on_audio_frame(void *user_data, int32_t frame_id)
 	}
 
 	// Decode audio frame using FFmpeg
-	if (audio_decoder_decode(context, frame.payload, frame.payload_size, frame.pts)) {
+	if (audio_decoder_decode(context, frame.payload, frame.payload_size, frame.timestamp_us)) {
 		// Audio was decoded and queued
 	}
 
